@@ -8,18 +8,23 @@ import { Plan } from '../lemon-squeezy/Plan';
 export async function LandingPagePricing() {
     const t = await getI18n();
 
-    // Get all plans from the database.
-    let allPlans: LsSubscriptionPlan[] =
-        await prisma.lsSubscriptionPlan.findMany();
+    let allPlans: LsSubscriptionPlan[] = [];
 
-    // If there are no plans in the database, sync them from Lemon Squeezy.
-    // You might want to add logic to sync plans periodically or a webhook handler.
-    if (!allPlans.length) {
-        allPlans = await syncPlans();
+    try {
+        // Get all plans from the database.
+        allPlans = await prisma.lsSubscriptionPlan.findMany();
+
+        // If there are no plans in the database, sync them from Lemon Squeezy.
+        // You might want to add logic to sync plans periodically or a webhook handler.
+        if (!allPlans.length) {
+            allPlans = await syncPlans();
+        }
+    } catch (error) {
+        console.error('Failed to load pricing plans.', error);
     }
 
     if (!allPlans.length) {
-        return <p>No plans available.</p>;
+        return <p>{t('pricing.no_plans_available')}</p>;
     }
 
     return (
