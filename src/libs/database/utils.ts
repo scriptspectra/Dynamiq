@@ -1,4 +1,4 @@
-import { auth } from '@clerk/nextjs';
+import { auth, currentUser } from '@clerk/nextjs/server';
 import { Prisma } from '@prisma/client';
 
 import { prisma } from './prisma-client';
@@ -10,26 +10,42 @@ export async function getSignedInUser(include?: Prisma.UserInclude) {
     const { userId } = authdata;
     if (!userId) return null;
 
-    // There's a signed in user, but it might not be in the database yet.
-    // Try a couple times to get the user from the database. This is a workaround for the race condition between the user signing up and creating the user in the database.
-    let user = null;
-    for (let i = 0; i < 10; i++) {
-        user = await prisma.user.findUnique({
-            where: {
-                clerkUserId: userId,
-            },
-            include,
-        });
+    // Fast path: user already synced in our database.
+    const existingUser = await prisma.user.findUnique({
+        where: {
+            clerkUserId: userId,
+        },
+        include,
+    });
+    if (existingUser) return existingUser;
 
-        if (user) break;
+    // Webhook-independent sync path:
+    // if webhook delivery fails, lazily create/link the user on first request.
+    const clerkUser = await currentUser();
+    const primaryEmail =
+        clerkUser?.emailAddresses.find(
+            (address) =>
+                address.id === clerkUser?.primaryEmailAddressId &&
+                !!address.emailAddress,
+        )?.emailAddress ?? '';
+    const fallbackEmail = clerkUser?.emailAddresses?.[0]?.emailAddress ?? '';
+    const email = primaryEmail || fallbackEmail;
+    if (!email) return null;
 
-        // Delay a random amount of miliseconds to avoid multiple users being created with the same slug or clerkUserId
-        await new Promise((resolve) =>
-            setTimeout(resolve, Math.random() * 1000),
-        );
-    }
-
-    return user;
+    return prisma.user.upsert({
+        where: {
+            email,
+        },
+        update: {
+            clerkUserId: userId,
+            email,
+        },
+        create: {
+            clerkUserId: userId,
+            email,
+        },
+        include,
+    });
 }
 
 // Checks that the user is signed in and returns the user from the database that matches the Clerk user ID, or throws an error if not.
