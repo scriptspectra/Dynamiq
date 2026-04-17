@@ -1,7 +1,70 @@
-import { auth, currentUser, redirectToSignIn } from '@clerk/nextjs/server';
+import {
+    auth,
+    clerkClient,
+    currentUser,
+    redirectToSignIn,
+} from '@clerk/nextjs/server';
 import { Prisma } from '@prisma/client';
 
 import { prisma } from './prisma-client';
+
+type SyncedUserIdentity = {
+    clerkUserId: string;
+    email: string;
+};
+
+async function getClerkIdentity(clerkUserId: string) {
+    const fromSession = await currentUser();
+    const primaryFromSession =
+        fromSession?.emailAddresses.find(
+            (address) =>
+                address.id === fromSession?.primaryEmailAddressId &&
+                !!address.emailAddress,
+        )?.emailAddress ?? '';
+    const fallbackFromSession =
+        fromSession?.emailAddresses?.[0]?.emailAddress ?? '';
+    const emailFromSession = primaryFromSession || fallbackFromSession;
+    if (emailFromSession) {
+        return { clerkUserId, email: emailFromSession } satisfies SyncedUserIdentity;
+    }
+
+    // Fallback to Clerk Backend API when currentUser() has no email in this request context.
+    const user = await clerkClient.users.getUser(clerkUserId);
+    const primaryFromApi =
+        user.emailAddresses.find(
+            (address) =>
+                address.id === user.primaryEmailAddressId &&
+                !!address.emailAddress,
+        )?.emailAddress ?? '';
+    const fallbackFromApi = user.emailAddresses?.[0]?.emailAddress ?? '';
+    const emailFromApi = primaryFromApi || fallbackFromApi;
+    if (!emailFromApi) return null;
+
+    return { clerkUserId, email: emailFromApi } satisfies SyncedUserIdentity;
+}
+
+export async function syncSignedInUserToDatabase(include?: Prisma.UserInclude) {
+    const { userId } = auth();
+    if (!userId) return null;
+
+    const identity = await getClerkIdentity(userId);
+    if (!identity) return null;
+
+    return prisma.user.upsert({
+        where: {
+            email: identity.email,
+        },
+        update: {
+            clerkUserId: identity.clerkUserId,
+            email: identity.email,
+        },
+        create: {
+            clerkUserId: identity.clerkUserId,
+            email: identity.email,
+        },
+        include,
+    });
+}
 
 // Checks that the user is signed in and returns the user from the database that matches the Clerk user ID.
 export async function getSignedInUser(include?: Prisma.UserInclude) {
@@ -19,33 +82,7 @@ export async function getSignedInUser(include?: Prisma.UserInclude) {
     });
     if (existingUser) return existingUser;
 
-    // Webhook-independent sync path:
-    // if webhook delivery fails, lazily create/link the user on first request.
-    const clerkUser = await currentUser();
-    const primaryEmail =
-        clerkUser?.emailAddresses.find(
-            (address) =>
-                address.id === clerkUser?.primaryEmailAddressId &&
-                !!address.emailAddress,
-        )?.emailAddress ?? '';
-    const fallbackEmail = clerkUser?.emailAddresses?.[0]?.emailAddress ?? '';
-    const email = primaryEmail || fallbackEmail;
-    if (!email) return null;
-
-    return prisma.user.upsert({
-        where: {
-            email,
-        },
-        update: {
-            clerkUserId: userId,
-            email,
-        },
-        create: {
-            clerkUserId: userId,
-            email,
-        },
-        include,
-    });
+    return syncSignedInUserToDatabase(include);
 }
 
 // Checks that the user is signed in and returns the user from the database that matches the Clerk user ID, or throws an error if not.

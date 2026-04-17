@@ -1,5 +1,6 @@
 import { CURRENCIES } from '@/libs/database';
 import { updateUser } from '@/libs/database/functions/user';
+import { syncSignedInUserToDatabase } from '@/libs/database/utils';
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 
@@ -22,5 +23,27 @@ export async function PUT(req: Request) {
         return NextResponse.json(queryResponse);
     } catch (error) {
         return NextResponse.json({ error }, { status: 500 });
+    }
+}
+
+// Sync signed-in Clerk user into database and return user record.
+export async function GET() {
+    try {
+        const user = await syncSignedInUserToDatabase();
+        if (!user) {
+            return NextResponse.json(
+                {
+                    ok: false,
+                    error: 'No signed-in user or no email available in Clerk profile',
+                },
+                { status: 401 },
+            );
+        }
+
+        return NextResponse.json({ ok: true, user });
+    } catch (error) {
+        const message =
+            error instanceof Error ? error.message : 'Failed to sync user';
+        return NextResponse.json({ ok: false, error: message }, { status: 500 });
     }
 }
