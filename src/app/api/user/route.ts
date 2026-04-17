@@ -1,6 +1,7 @@
 import { CURRENCIES } from '@/libs/database';
 import { updateUser } from '@/libs/database/functions/user';
 import { syncSignedInUserToDatabase } from '@/libs/database/utils';
+import { auth, currentUser } from '@clerk/nextjs/server';
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 
@@ -29,18 +30,34 @@ export async function PUT(req: Request) {
 // Sync signed-in Clerk user into database and return user record.
 export async function GET() {
     try {
+        const { userId } = auth();
+        const clerkUser = await currentUser();
         const user = await syncSignedInUserToDatabase();
         if (!user) {
             return NextResponse.json(
                 {
                     ok: false,
-                    error: 'No signed-in user or no email available in Clerk profile',
+                    error: 'Sync failed: no signed-in Clerk user detected',
+                    debug: {
+                        userId: userId ?? null,
+                        clerkPrimaryEmailId:
+                            clerkUser?.primaryEmailAddressId ?? null,
+                        clerkEmailCount: clerkUser?.emailAddresses?.length ?? 0,
+                        targetTable: 'public."User"',
+                    },
                 },
                 { status: 401 },
             );
         }
 
-        return NextResponse.json({ ok: true, user });
+        return NextResponse.json({
+            ok: true,
+            user,
+            debug: {
+                userId,
+                targetTable: 'public."User"',
+            },
+        });
     } catch (error) {
         const message =
             error instanceof Error ? error.message : 'Failed to sync user';

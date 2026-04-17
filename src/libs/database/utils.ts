@@ -1,8 +1,6 @@
 import {
     auth,
-    clerkClient,
     currentUser,
-    redirectToSignIn,
 } from '@clerk/nextjs/server';
 import { Prisma } from '@prisma/client';
 
@@ -10,7 +8,7 @@ import { prisma } from './prisma-client';
 
 type SyncedUserIdentity = {
     clerkUserId: string;
-    email: string;
+    email: string | null;
 };
 
 async function getClerkIdentity(clerkUserId: string) {
@@ -28,19 +26,16 @@ async function getClerkIdentity(clerkUserId: string) {
         return { clerkUserId, email: emailFromSession } satisfies SyncedUserIdentity;
     }
 
-    // Fallback to Clerk Backend API when currentUser() has no email in this request context.
-    const user = await clerkClient.users.getUser(clerkUserId);
-    const primaryFromApi =
-        user.emailAddresses.find(
-            (address) =>
-                address.id === user.primaryEmailAddressId &&
-                !!address.emailAddress,
-        )?.emailAddress ?? '';
-    const fallbackFromApi = user.emailAddresses?.[0]?.emailAddress ?? '';
-    const emailFromApi = primaryFromApi || fallbackFromApi;
-    if (!emailFromApi) return null;
-
-    return { clerkUserId, email: emailFromApi } satisfies SyncedUserIdentity;
+    // Fallback to session claims when currentUser() has no email.
+    const { sessionClaims } = auth();
+    const emailFromClaims =
+        (sessionClaims?.email as string | undefined) ||
+        (sessionClaims?.primaryEmailAddress as string | undefined) ||
+        '';
+    return {
+        clerkUserId,
+        email: emailFromClaims || null,
+    } satisfies SyncedUserIdentity;
 }
 
 export async function syncSignedInUserToDatabase(include?: Prisma.UserInclude) {
@@ -50,17 +45,35 @@ export async function syncSignedInUserToDatabase(include?: Prisma.UserInclude) {
     const identity = await getClerkIdentity(userId);
     if (!identity) return null;
 
+    // Fallback for cases where Clerk context does not expose email in this request.
+    // Guarantees a synced DB row keyed by clerkUserId.
+    const fallbackEmail = `clerk+${identity.clerkUserId}@local.invalid`;
+    const resolvedEmail = identity.email || fallbackEmail;
+
+    // If we have a real email and a row already exists under that email, link it.
+    if (identity.email) {
+        const existingByEmail = await prisma.user.findUnique({
+            where: { email: identity.email },
+        });
+        if (existingByEmail && existingByEmail.clerkUserId !== identity.clerkUserId) {
+            return prisma.user.update({
+                where: { id: existingByEmail.id },
+                data: { clerkUserId: identity.clerkUserId, email: identity.email },
+                include,
+            });
+        }
+    }
+
     return prisma.user.upsert({
         where: {
-            email: identity.email,
+            clerkUserId: identity.clerkUserId,
         },
         update: {
-            clerkUserId: identity.clerkUserId,
-            email: identity.email,
+            ...(identity.email ? { email: identity.email } : {}),
         },
         create: {
             clerkUserId: identity.clerkUserId,
-            email: identity.email,
+            email: resolvedEmail,
         },
         include,
     });
@@ -88,7 +101,7 @@ export async function getSignedInUser(include?: Prisma.UserInclude) {
 // Checks that the user is signed in and returns the user from the database that matches the Clerk user ID, or throws an error if not.
 export async function getSignedInUserOrThrow(include?: Prisma.UserInclude) {
     const { userId } = auth();
-    if (!userId) return redirectToSignIn();
+    if (!userId) throw new Error('User not signed in');
 
     const user = await getSignedInUser(include);
     if (!user) throw new Error('User not found in database');
