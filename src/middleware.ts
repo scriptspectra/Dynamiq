@@ -24,7 +24,7 @@ export default authMiddleware({
     publicRoutes: ['((?!^/dashboard).*)'],
     // Routes that can always be accessed, and have
     // no authentication information
-    ignoredRoutes: [],
+    ignoredRoutes: ['/api/webhooks/(.*)'],
 });
 
 export const config = {

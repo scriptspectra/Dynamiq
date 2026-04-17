@@ -120,6 +120,8 @@ export async function POST(req: Request) {
         return NextResponse.json({ user });
     } catch (error) {
         console.error('Clerk webhook error:', error);
-        return NextResponse.json({ error }, { status: 500 });
+        const message =
+            error instanceof Error ? error.message : 'Unknown webhook error';
+        return NextResponse.json({ error: message }, { status: 500 });
     }
 }
