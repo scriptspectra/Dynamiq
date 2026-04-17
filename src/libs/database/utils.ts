@@ -50,8 +50,11 @@ export async function getSignedInUser(include?: Prisma.UserInclude) {
 
 // Checks that the user is signed in and returns the user from the database that matches the Clerk user ID, or throws an error if not.
 export async function getSignedInUserOrThrow(include?: Prisma.UserInclude) {
+    const { userId, redirectToSignIn } = auth();
+    if (!userId) return redirectToSignIn();
+
     const user = await getSignedInUser(include);
-    if (!user) throw new Error('User not signed in');
+    if (!user) throw new Error('User not found in database');
 
     return user;
 }
