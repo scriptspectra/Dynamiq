@@ -1,4 +1,4 @@
-import { auth, currentUser } from '@clerk/nextjs/server';
+import { auth, currentUser, redirectToSignIn } from '@clerk/nextjs/server';
 import { Prisma } from '@prisma/client';
 
 import { prisma } from './prisma-client';
@@ -50,7 +50,7 @@ export async function getSignedInUser(include?: Prisma.UserInclude) {
 
 // Checks that the user is signed in and returns the user from the database that matches the Clerk user ID, or throws an error if not.
 export async function getSignedInUserOrThrow(include?: Prisma.UserInclude) {
-    const { userId, redirectToSignIn } = auth();
+    const { userId } = auth();
     if (!userId) return redirectToSignIn();
 
     const user = await getSignedInUser(include);
