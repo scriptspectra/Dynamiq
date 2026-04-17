@@ -24,7 +24,7 @@ export async function LandingPagePricing() {
     }
 
     if (!allPlans.length) {
-        return <p>{t('pricing.no_plans_available')}</p>;
+        return <p>t('pricing.no_plans_available', {})</p>;
     }
 
     return (
