@@ -98,7 +98,7 @@ export async function POST(req: Request) {
                     where: {
                         OR: [{ clerkUserId }, { email }],
                     },
-                    update: {
+                    data: {
                         clerkUserId,
                         email,
                     },
